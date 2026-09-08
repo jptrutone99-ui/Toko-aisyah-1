@@ -25,15 +25,21 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Re-create Clean Flutter Project
+      - name: Prepare Project Structure
         run: |
           mkdir -p temp_backup
           [ -f lib/main.dart ] && cp lib/main.dart temp_backup/main.dart
           [ -f pubspec.yaml ] && cp pubspec.yaml temp_backup/pubspec.yaml
+          [ -f android/app/google-services.json ] && cp android/app/google-services.json temp_backup/google-services.json
+          
           rm -rf lib android ios web pubspec.yaml
           flutter create . --org com.tokoaisyah --project-name toko_aisyah
+          
           [ -f temp_backup/main.dart ] && cp temp_backup/main.dart lib/main.dart
           [ -f temp_backup/pubspec.yaml ] && cp temp_backup/pubspec.yaml pubspec.yaml
+          
+          mkdir -p android/app
+          [ -f temp_backup/google-services.json ] && cp temp_backup/google-services.json android/app/google-services.json
 
       - name: Install Dependencies
         run: flutter pub get
