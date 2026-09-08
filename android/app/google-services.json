@@ -1,1 +1,29 @@
-
+{
+  "project_info": {
+    "project_number": "889501636706",
+    "project_id": "toko-aisyah-cb9b6",
+    "storage_bucket": "toko-aisyah-cb9b6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:889501636706:android:0f22d3691ffb6b5499193b",
+        "android_client_info": {
+          "package_name": "com.tokoaisyah.toko_aisyah"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCKhR_DyNq-7FTSlAvZBAIMDI7499thWn8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
