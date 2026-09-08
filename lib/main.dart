@@ -1,7 +1,9 @@
-
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const TokoAisyahApp());
 }
 
@@ -44,6 +46,22 @@ class Product {
     required this.price,
     required this.stock,
   });
+
+  // Konversi ke JSON untuk disimpan di SharedPreferences
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'price': price,
+        'stock': stock,
+      };
+
+  // Membaca dari JSON
+  factory Product.fromJson(Map<String, dynamic> json) => Product(
+        id: json['id'],
+        name: json['name'],
+        price: (json['price'] as num).toDouble(),
+        stock: json['stock'],
+      );
 }
 
 class CartItem {
@@ -61,18 +79,64 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  // Data Produk Awal
-  final List<Product> _products = [
-    Product(id: '1', name: 'Minyak Goreng 2L', price: 34000, stock: 10),
-    Product(id: '2', name: 'Beras 5kg', price: 68000, stock: 2), // Stok Menipis
-    Product(id: '3', name: 'Gula Pasir 1kg', price: 16000, stock: 15),
-    Product(id: '4', name: 'Telur Ayam 1kg', price: 28000, stock: 3), // Stok Menipis
-    Product(id: '5', name: 'Kopi Kapal Api', price: 12000, stock: 8),
-  ];
-
+  List<Product> _products = [];
   final List<CartItem> _cart = [];
   String _searchQuery = '';
-  double _totalSales = 0.0; // Total Hasil Penjualan
+  double _totalSales = 0.0;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDataFromStorage();
+  }
+
+  // Memuat data dari memori internal HP
+  Future<void> _loadDataFromStorage() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Memuat Total Penjualan
+    setState(() {
+      _totalSales = prefs.getDouble('total_sales') ?? 0.0;
+    });
+
+    // Memuat Daftar Produk
+    final String? productsJson = prefs.getString('saved_products');
+    if (productsJson != null) {
+      final List<dynamic> decodedList = jsonDecode(productsJson);
+      setState(() {
+        _products = decodedList.map((item) => Product.fromJson(item)).toList();
+      });
+    } else {
+      // Data Default jika aplikasi baru pertama kali diinstall
+      _products = [
+        Product(id: '1', name: 'Minyak Goreng 2L', price: 34000, stock: 10),
+        Product(id: '2', name: 'Beras 5kg', price: 68000, stock: 2),
+        Product(id: '3', name: 'Gula Pasir 1kg', price: 16000, stock: 15),
+        Product(id: '4', name: 'Telur Ayam 1kg', price: 28000, stock: 3),
+        Product(id: '5', name: 'Kopi Kapal Api', price: 12000, stock: 8),
+      ];
+      _saveProductsToStorage();
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
+  }
+
+  // Menyimpan Produk ke memori internal HP
+  Future<void> _saveProductsToStorage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String encodedData =
+        jsonEncode(_products.map((p) => p.toJson()).toList());
+    await prefs.setString('saved_products', encodedData);
+  }
+
+  // Menyimpan Total Penjualan ke memori internal HP
+  Future<void> _saveSalesToStorage() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('total_sales', _totalSales);
+  }
 
   // Filter produk berdasarkan pencarian
   List<Product> get _filteredProducts {
@@ -87,17 +151,18 @@ class _HomePageState extends State<HomePage> {
   // Tambah/Edit Produk Dialog
   void _showProductDialog([Product? product]) {
     final nameController = TextEditingController(text: product?.name ?? '');
-    final priceController =
-        TextEditingController(text: product != null ? product.price.toStringAsFixed(0) : '');
-    final stockController =
-        TextEditingController(text: product != null ? product.stock.toString() : '');
+    final priceController = TextEditingController(
+        text: product != null ? product.price.toStringAsFixed(0) : '');
+    final stockController = TextEditingController(
+        text: product != null ? product.stock.toString() : '');
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(
           product == null ? 'Tambah Barang Baru' : 'Edit Barang',
-          style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0D47A1)),
+          style: const TextStyle(
+              fontWeight: FontWeight.bold, color: Color(0xFF0D47A1)),
         ),
         content: SingleChildScrollView(
           child: Column(
@@ -126,7 +191,8 @@ class _HomePageState extends State<HomePage> {
             child: const Text('Batal', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0D47A1)),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0D47A1)),
             onPressed: () {
               final name = nameController.text.trim();
               final price = double.tryParse(priceController.text) ?? 0.0;
@@ -136,7 +202,7 @@ class _HomePageState extends State<HomePage> {
                 setState(() {
                   if (product == null) {
                     _products.add(Product(
-                      id: DateTime.now().toString(),
+                      id: DateTime.now().millisecondsSinceEpoch.toString(),
                       name: name,
                       price: price,
                       stock: stock,
@@ -147,6 +213,7 @@ class _HomePageState extends State<HomePage> {
                     product.stock = stock;
                   }
                 });
+                _saveProductsToStorage(); // Simpan perubahan
                 Navigator.pop(ctx);
               }
             },
@@ -162,13 +229,15 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _products.removeWhere((p) => p.id == id);
     });
+    _saveProductsToStorage(); // Simpan perubahan
   }
 
   // Tambah ke Keranjang
   void _addToCart(Product product) {
     if (product.stock <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Stok habis!'), backgroundColor: Colors.red),
+        const SnackBar(
+            content: Text('Stok habis!'), backgroundColor: Colors.red),
       );
       return;
     }
@@ -205,12 +274,16 @@ class _HomePageState extends State<HomePage> {
       _cart.clear();
     });
 
+    _saveProductsToStorage(); // Simpan perubahan stok
+    _saveSalesToStorage(); // Simpan total penjualan
+
     Navigator.pop(context);
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Transaksi Berhasil!'),
-        content: Text('Total Pembayaran: Rp ${currentCartTotal.toStringAsFixed(0)}'),
+        content: Text(
+            'Total Pembayaran: Rp ${currentCartTotal.toStringAsFixed(0)}'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -228,8 +301,10 @@ class _HomePageState extends State<HomePage> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: const [
-            Text('TOKO AISYAH', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
-            Text('by Joko Pranando', style: TextStyle(fontSize: 12, color: Colors.blueAccent)),
+            Text('TOKO AISYAH',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+            Text('by Joko Pranando',
+                style: TextStyle(fontSize: 12, color: Colors.blueAccent)),
           ],
         ),
         actions: [
@@ -252,7 +327,10 @@ class _HomePageState extends State<HomePage> {
                     ),
                     child: Text(
                       '${_cart.length}',
-                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold),
                     ),
                   ),
                 )
@@ -260,130 +338,159 @@ class _HomePageState extends State<HomePage> {
           )
         ],
       ),
-      body: Column(
-        children: [
-          // Banner Total Penjualan
-          Container(
-            padding: const EdgeInsets.all(16),
-            width: double.infinity,
-            color: const Color(0xFF0D47A1),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
               children: [
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Total Penjualan', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                    Text('Hasil Toko Hari Ini', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  ],
+                // Banner Total Penjualan
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  width: double.infinity,
+                  color: const Color(0xFF0D47A1),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Total Penjualan',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 13)),
+                          Text('Hasil Toko Hari Ini',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      Text(
+                        'Rp ${_totalSales.toStringAsFixed(0)}',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold),
+                      )
+                    ],
+                  ),
                 ),
-                Text(
-                  'Rp ${_totalSales.toStringAsFixed(0)}',
-                  style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                )
+
+                // Search Bar
+                Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: TextField(
+                    onChanged: (value) {
+                      setState(() {
+                        _searchQuery = value;
+                      });
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'Cari nama barang...',
+                      prefixIcon:
+                          const Icon(Icons.search, color: Color(0xFF0D47A1)),
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFF0D47A1)),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // List Produk
+                Expanded(
+                  child: _filteredProducts.isEmpty
+                      ? const Center(child: Text('Barang tidak ditemukan'))
+                      : ListView.builder(
+                          itemCount: _filteredProducts.length,
+                          itemBuilder: (ctx, index) {
+                            final p = _filteredProducts[index];
+                            final isLowStock = p.stock <= 3;
+
+                            return Card(
+                              margin: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 6),
+                              elevation: 2,
+                              shape: RoundedRectangleBorder(
+                                side: BorderSide(
+                                  color: isLowStock
+                                      ? Colors.red
+                                      : Colors.transparent,
+                                  width: 1.5,
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: ListTile(
+                                title: Text(
+                                  p.name,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.black),
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Rp ${p.price.toStringAsFixed(0)}',
+                                        style: const TextStyle(
+                                            color: Color(0xFF0D47A1),
+                                            fontWeight: FontWeight.w600)),
+                                    const SizedBox(height: 4),
+                                    Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: isLowStock
+                                                ? Colors.red.shade100
+                                                : Colors.blue.shade50,
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            isLowStock
+                                                ? 'Stok Menipis: ${p.stock}'
+                                                : 'Stok: ${p.stock}',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                              color: isLowStock
+                                                  ? Colors.red.shade900
+                                                  : const Color(0xFF0D47A1),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.edit,
+                                          color: Colors.black54),
+                                      onPressed: () => _showProductDialog(p),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete,
+                                          color: Colors.black54),
+                                      onPressed: () => _deleteProduct(p.id),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.add_shopping_cart,
+                                          color: Color(0xFF0D47A1)),
+                                      onPressed: () => _addToCart(p),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
               ],
             ),
-          ),
-
-          // Search Bar
-          Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: TextField(
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                });
-              },
-              decoration: InputDecoration(
-                hintText: 'Cari nama barang...',
-                prefixIcon: const Icon(Icons.search, color: Color(0xFF0D47A1)),
-                filled: true,
-                fillColor: Colors.white,
-                contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: Color(0xFF0D47A1)),
-                ),
-              ),
-            ),
-          ),
-
-          // List Produk
-          Expanded(
-            child: _filteredProducts.isEmpty
-                ? const Center(child: Text('Barang tidak ditemukan'))
-                : ListView.builder(
-                    itemCount: _filteredProducts.length,
-                    itemBuilder: (ctx, index) {
-                      final p = _filteredProducts[index];
-                      final isLowStock = p.stock <= 3;
-
-                      return Card(
-                        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                          side: BorderSide(
-                            color: isLowStock ? Colors.red : Colors.transparent,
-                            width: 1.5,
-                          ),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: ListTile(
-                          title: Text(
-                            p.name,
-                            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black),
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Rp ${p.price.toStringAsFixed(0)}',
-                                  style: const TextStyle(color: Color(0xFF0D47A1), fontWeight: FontWeight.w600)),
-                              const SizedBox(height: 4),
-                              Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: isLowStock ? Colors.red.shade100 : Colors.blue.shade50,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      isLowStock ? 'Stok Menipis: ${p.stock}' : 'Stok: ${p.stock}',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
-                                        color: isLowStock ? Colors.red.shade900 : const Color(0xFF0D47A1),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.edit, color: Colors.black54),
-                                onPressed: () => _showProductDialog(p),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.black54),
-                                onPressed: () => _deleteProduct(p.id),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.add_shopping_cart, color: Color(0xFF0D47A1)),
-                                onPressed: () => _addToCart(p),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: const Color(0xFF0D47A1),
         onPressed: () => _showProductDialog(),
@@ -397,7 +504,8 @@ class _HomePageState extends State<HomePage> {
       context: context,
       isScrollControlled: true,
       builder: (ctx) {
-        double cartTotal = _cart.fold(0, (sum, item) => sum + (item.product.price * item.quantity));
+        double cartTotal = _cart.fold(
+            0, (sum, item) => sum + (item.product.price * item.quantity));
 
         return Container(
           padding: const EdgeInsets.all(16),
@@ -407,7 +515,10 @@ class _HomePageState extends State<HomePage> {
             children: [
               const Text(
                 'Keranjang Belanja',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black),
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black),
               ),
               const Divider(),
               Expanded(
@@ -419,10 +530,12 @@ class _HomePageState extends State<HomePage> {
                           final item = _cart[i];
                           return ListTile(
                             title: Text(item.product.name),
-                            subtitle: Text('Rp ${item.product.price.toStringAsFixed(0)} x ${item.quantity}'),
+                            subtitle: Text(
+                                'Rp ${item.product.price.toStringAsFixed(0)} x ${item.quantity}'),
                             trailing: Text(
                               'Rp ${(item.product.price * item.quantity).toStringAsFixed(0)}',
-                              style: const TextStyle(fontWeight: FontWeight.bold),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold),
                             ),
                           );
                         },
@@ -434,12 +547,15 @@ class _HomePageState extends State<HomePage> {
                 children: [
                   Text(
                     'Total: Rp ${cartTotal.toStringAsFixed(0)}',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0D47A1)),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0D47A1)),
                     onPressed: _cart.isEmpty ? null : _checkout,
-                    child: const Text('Selesaikan Transaksi', style: TextStyle(color: Colors.white)),
+                    child: const Text('Selesaikan Transaksi',
+                        style: TextStyle(color: Colors.white)),
                   )
                 ],
               )
