@@ -1,9 +1,10 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
   runApp(const TokoAisyahApp());
 }
 
@@ -18,7 +19,7 @@ class TokoAisyahApp extends StatelessWidget {
       theme: ThemeData(
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF0D47A1), // Biru Tua
+          seedColor: const Color(0xFF0D47A1),
           primary: const Color(0xFF0D47A1),
           secondary: Colors.black,
           surface: Colors.white,
@@ -34,41 +35,20 @@ class TokoAisyahApp extends StatelessWidget {
   }
 }
 
-class Product {
-  String id;
-  String name;
-  double price;
-  int stock;
+class CartItem {
+  final String id;
+  final String name;
+  final double price;
+  int quantity;
+  int currentStock;
 
-  Product({
+  CartItem({
     required this.id,
     required this.name,
     required this.price,
-    required this.stock,
+    required this.quantity,
+    required this.currentStock,
   });
-
-  // Konversi ke JSON untuk disimpan di SharedPreferences
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'price': price,
-        'stock': stock,
-      };
-
-  // Membaca dari JSON
-  factory Product.fromJson(Map<String, dynamic> json) => Product(
-        id: json['id'],
-        name: json['name'],
-        price: (json['price'] as num).toDouble(),
-        stock: json['stock'],
-      );
-}
-
-class CartItem {
-  final Product product;
-  int quantity;
-
-  CartItem({required this.product, required this.quantity});
 }
 
 class HomePage extends StatefulWidget {
@@ -79,88 +59,27 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  List<Product> _products = [];
+  final CollectionReference _productsRef =
+      FirebaseFirestore.instance.collection('products');
+  final DocumentReference _salesRef =
+      FirebaseFirestore.instance.collection('reports').doc('daily_sales');
+
   final List<CartItem> _cart = [];
   String _searchQuery = '';
-  double _totalSales = 0.0;
-  bool _isLoading = true;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadDataFromStorage();
-  }
-
-  // Memuat data dari memori internal HP
-  Future<void> _loadDataFromStorage() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    // Memuat Total Penjualan
-    setState(() {
-      _totalSales = prefs.getDouble('total_sales') ?? 0.0;
-    });
-
-    // Memuat Daftar Produk
-    final String? productsJson = prefs.getString('saved_products');
-    if (productsJson != null) {
-      final List<dynamic> decodedList = jsonDecode(productsJson);
-      setState(() {
-        _products = decodedList.map((item) => Product.fromJson(item)).toList();
-      });
-    } else {
-      // Data Default jika aplikasi baru pertama kali diinstall
-      _products = [
-        Product(id: '1', name: 'Minyak Goreng 2L', price: 34000, stock: 10),
-        Product(id: '2', name: 'Beras 5kg', price: 68000, stock: 2),
-        Product(id: '3', name: 'Gula Pasir 1kg', price: 16000, stock: 15),
-        Product(id: '4', name: 'Telur Ayam 1kg', price: 28000, stock: 3),
-        Product(id: '5', name: 'Kopi Kapal Api', price: 12000, stock: 8),
-      ];
-      _saveProductsToStorage();
-    }
-
-    setState(() {
-      _isLoading = false;
-    });
-  }
-
-  // Menyimpan Produk ke memori internal HP
-  Future<void> _saveProductsToStorage() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String encodedData =
-        jsonEncode(_products.map((p) => p.toJson()).toList());
-    await prefs.setString('saved_products', encodedData);
-  }
-
-  // Menyimpan Total Penjualan ke memori internal HP
-  Future<void> _saveSalesToStorage() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('total_sales', _totalSales);
-  }
-
-  // Filter produk berdasarkan pencarian
-  List<Product> get _filteredProducts {
-    if (_searchQuery.isEmpty) {
-      return _products;
-    }
-    return _products
-        .where((p) => p.name.toLowerCase().contains(_searchQuery.toLowerCase()))
-        .toList();
-  }
-
-  // Tambah/Edit Produk Dialog
-  void _showProductDialog([Product? product]) {
-    final nameController = TextEditingController(text: product?.name ?? '');
+  // Tambah/Edit Produk ke Cloud Firestore
+  void _showProductDialog([DocumentSnapshot? doc]) {
+    final nameController = TextEditingController(text: doc?['name'] ?? '');
     final priceController = TextEditingController(
-        text: product != null ? product.price.toStringAsFixed(0) : '');
-    final stockController = TextEditingController(
-        text: product != null ? product.stock.toString() : '');
+        text: doc != null ? doc['price'].toStringAsFixed(0) : '');
+    final stockController =
+        TextEditingController(text: doc != null ? doc['stock'].toString() : '');
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(
-          product == null ? 'Tambah Barang Baru' : 'Edit Barang',
+          doc == null ? 'Tambah Barang Baru' : 'Edit Barang',
           style: const TextStyle(
               fontWeight: FontWeight.bold, color: Color(0xFF0D47A1)),
         ),
@@ -193,28 +112,27 @@ class _HomePageState extends State<HomePage> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0D47A1)),
-            onPressed: () {
+            onPressed: () async {
               final name = nameController.text.trim();
               final price = double.tryParse(priceController.text) ?? 0.0;
               final stock = int.tryParse(stockController.text) ?? 0;
 
               if (name.isNotEmpty && price > 0) {
-                setState(() {
-                  if (product == null) {
-                    _products.add(Product(
-                      id: DateTime.now().millisecondsSinceEpoch.toString(),
-                      name: name,
-                      price: price,
-                      stock: stock,
-                    ));
-                  } else {
-                    product.name = name;
-                    product.price = price;
-                    product.stock = stock;
-                  }
-                });
-                _saveProductsToStorage(); // Simpan perubahan
-                Navigator.pop(ctx);
+                if (doc == null) {
+                  await _productsRef.add({
+                    'name': name,
+                    'price': price,
+                    'stock': stock,
+                    'created_at': FieldValue.serverTimestamp(),
+                  });
+                } else {
+                  await _productsRef.doc(doc.id).update({
+                    'name': name,
+                    'price': price,
+                    'stock': stock,
+                  });
+                }
+                if (mounted) Navigator.pop(ctx);
               }
             },
             child: const Text('Simpan', style: TextStyle(color: Colors.white)),
@@ -224,17 +142,15 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // Hapus Barang
-  void _deleteProduct(String id) {
-    setState(() {
-      _products.removeWhere((p) => p.id == id);
-    });
-    _saveProductsToStorage(); // Simpan perubahan
+  void _deleteProduct(String id) async {
+    await _productsRef.doc(id).delete();
   }
 
-  // Tambah ke Keranjang
-  void _addToCart(Product product) {
-    if (product.stock <= 0) {
+  void _addToCart(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final int stock = data['stock'] ?? 0;
+
+    if (stock <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text('Stok habis!'), backgroundColor: Colors.red),
@@ -243,55 +159,72 @@ class _HomePageState extends State<HomePage> {
     }
 
     setState(() {
-      final index = _cart.indexWhere((item) => item.product.id == product.id);
+      final index = _cart.indexWhere((item) => item.id == doc.id);
       if (index >= 0) {
-        if (_cart[index].quantity < product.stock) {
+        if (_cart[index].quantity < stock) {
           _cart[index].quantity++;
         }
       } else {
-        _cart.add(CartItem(product: product, quantity: 1));
+        _cart.add(CartItem(
+          id: doc.id,
+          name: data['name'],
+          price: (data['price'] as num).toDouble(),
+          quantity: 1,
+          currentStock: stock,
+        ));
       }
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('${product.name} masuk keranjang'),
+        content: Text('${data['name']} masuk keranjang'),
         duration: const Duration(seconds: 1),
       ),
     );
   }
 
-  // Checkout
-  void _checkout() {
+  // Transaction Checkout Online
+  void _checkout() async {
     double currentCartTotal = 0;
+
+    WriteBatch batch = FirebaseFirestore.instance.batch();
+
     for (var item in _cart) {
-      currentCartTotal += item.product.price * item.quantity;
-      item.product.stock -= item.quantity;
+      currentCartTotal += item.price * item.quantity;
+      DocumentReference pRef = _productsRef.doc(item.id);
+      batch.update(pRef, {'stock': FieldValue.increment(-item.quantity)});
     }
 
+    batch.set(
+        _salesRef,
+        {
+          'total_sales': FieldValue.increment(currentCartTotal),
+        },
+        SetOptions(merge: true));
+
+    await batch.commit();
+
     setState(() {
-      _totalSales += currentCartTotal;
       _cart.clear();
     });
 
-    _saveProductsToStorage(); // Simpan perubahan stok
-    _saveSalesToStorage(); // Simpan total penjualan
-
-    Navigator.pop(context);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Transaksi Berhasil!'),
-        content: Text(
-            'Total Pembayaran: Rp ${currentCartTotal.toStringAsFixed(0)}'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
-          )
-        ],
-      ),
-    );
+    if (mounted) {
+      Navigator.pop(context);
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Transaksi Berhasil!'),
+          content: Text(
+              'Total Pembayaran: Rp ${currentCartTotal.toStringAsFixed(0)}'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            )
+          ],
+        ),
+      );
+    }
   }
 
   @override
@@ -301,8 +234,8 @@ class _HomePageState extends State<HomePage> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: const [
-            Text('TOKO AISYAH',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+            Text('TOKO AISYAH (ONLINE)',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
             Text('by Joko Pranando',
                 style: TextStyle(fontSize: 12, color: Colors.blueAccent)),
           ],
@@ -338,159 +271,179 @@ class _HomePageState extends State<HomePage> {
           )
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                // Banner Total Penjualan
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  width: double.infinity,
-                  color: const Color(0xFF0D47A1),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Total Penjualan',
-                              style: TextStyle(
-                                  color: Colors.white70, fontSize: 13)),
-                          Text('Hasil Toko Hari Ini',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      Text(
-                        'Rp ${_totalSales.toStringAsFixed(0)}',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold),
-                      )
-                    ],
-                  ),
-                ),
+      body: Column(
+        children: [
+          // Banner Real-time Total Penjualan Online
+          StreamBuilder<DocumentSnapshot>(
+            stream: _salesRef.snapshots(),
+            builder: (context, snapshot) {
+              double totalSales = 0.0;
+              if (snapshot.hasData && snapshot.data!.exists) {
+                final data = snapshot.data!.data() as Map<String, dynamic>?;
+                totalSales = (data?['total_sales'] ?? 0.0).toDouble();
+              }
 
-                // Search Bar
-                Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: TextField(
-                    onChanged: (value) {
-                      setState(() {
-                        _searchQuery = value;
-                      });
-                    },
-                    decoration: InputDecoration(
-                      hintText: 'Cari nama barang...',
-                      prefixIcon:
-                          const Icon(Icons.search, color: Color(0xFF0D47A1)),
-                      filled: true,
-                      fillColor: Colors.white,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: Color(0xFF0D47A1)),
-                      ),
+              return Container(
+                padding: const EdgeInsets.all(16),
+                width: double.infinity,
+                color: const Color(0xFF0D47A1),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Total Penjualan Online',
+                            style: TextStyle(
+                                color: Colors.white70, fontSize: 13)),
+                        Text('Hasil Toko Hari Ini',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
+                      ],
                     ),
-                  ),
+                    Text(
+                      'Rp ${totalSales.toStringAsFixed(0)}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold),
+                    )
+                  ],
                 ),
+              );
+            },
+          ),
 
-                // List Produk
-                Expanded(
-                  child: _filteredProducts.isEmpty
-                      ? const Center(child: Text('Barang tidak ditemukan'))
-                      : ListView.builder(
-                          itemCount: _filteredProducts.length,
-                          itemBuilder: (ctx, index) {
-                            final p = _filteredProducts[index];
-                            final isLowStock = p.stock <= 3;
-
-                            return Card(
-                              margin: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 6),
-                              elevation: 2,
-                              shape: RoundedRectangleBorder(
-                                side: BorderSide(
-                                  color: isLowStock
-                                      ? Colors.red
-                                      : Colors.transparent,
-                                  width: 1.5,
-                                ),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: ListTile(
-                                title: Text(
-                                  p.name,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.black),
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text('Rp ${p.price.toStringAsFixed(0)}',
-                                        style: const TextStyle(
-                                            color: Color(0xFF0D47A1),
-                                            fontWeight: FontWeight.w600)),
-                                    const SizedBox(height: 4),
-                                    Row(
-                                      children: [
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: isLowStock
-                                                ? Colors.red.shade100
-                                                : Colors.blue.shade50,
-                                            borderRadius:
-                                                BorderRadius.circular(4),
-                                          ),
-                                          child: Text(
-                                            isLowStock
-                                                ? 'Stok Menipis: ${p.stock}'
-                                                : 'Stok: ${p.stock}',
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.bold,
-                                              color: isLowStock
-                                                  ? Colors.red.shade900
-                                                  : const Color(0xFF0D47A1),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.edit,
-                                          color: Colors.black54),
-                                      onPressed: () => _showProductDialog(p),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete,
-                                          color: Colors.black54),
-                                      onPressed: () => _deleteProduct(p.id),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.add_shopping_cart,
-                                          color: Color(0xFF0D47A1)),
-                                      onPressed: () => _addToCart(p),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+          // Search Bar
+          Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: TextField(
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value.toLowerCase();
+                });
+              },
+              decoration: InputDecoration(
+                hintText: 'Cari nama barang...',
+                prefixIcon:
+                    const Icon(Icons.search, color: Color(0xFF0D47A1)),
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFF0D47A1)),
                 ),
-              ],
+              ),
             ),
+          ),
+
+          // StreamBuilder Real-time List Produk dari Firebase Cloud
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: _productsRef.snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const Center(
+                      child: Text('Belum ada produk di database online'));
+                }
+
+                final docs = snapshot.data!.docs.where((doc) {
+                  final name = (doc['name'] ?? '').toString().toLowerCase();
+                  return name.contains(_searchQuery);
+                }).toList();
+
+                return ListView.builder(
+                  itemCount: docs.length,
+                  itemBuilder: (ctx, index) {
+                    final doc = docs[index];
+                    final data = doc.data() as Map<String, dynamic>;
+                    final stock = data['stock'] ?? 0;
+                    final isLowStock = stock <= 3;
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(
+                        side: BorderSide(
+                          color: isLowStock ? Colors.red : Colors.transparent,
+                          width: 1.5,
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: ListTile(
+                        title: Text(
+                          data['name'] ?? '',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, color: Colors.black),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Rp ${(data['price'] ?? 0).toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                    color: Color(0xFF0D47A1),
+                                    fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: isLowStock
+                                    ? Colors.red.shade100
+                                    : Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                isLowStock
+                                    ? 'Stok Menipis: $stock'
+                                    : 'Stok: $stock',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: isLowStock
+                                      ? Colors.red.shade900
+                                      : const Color(0xFF0D47A1),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit,
+                                  color: Colors.black54),
+                              onPressed: () => _showProductDialog(doc),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete,
+                                  color: Colors.black54),
+                              onPressed: () => _deleteProduct(doc.id),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.add_shopping_cart,
+                                  color: Color(0xFF0D47A1)),
+                              onPressed: () => _addToCart(doc),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: const Color(0xFF0D47A1),
         onPressed: () => _showProductDialog(),
@@ -504,8 +457,8 @@ class _HomePageState extends State<HomePage> {
       context: context,
       isScrollControlled: true,
       builder: (ctx) {
-        double cartTotal = _cart.fold(
-            0, (sum, item) => sum + (item.product.price * item.quantity));
+        double cartTotal =
+            _cart.fold(0, (sum, item) => sum + (item.price * item.quantity));
 
         return Container(
           padding: const EdgeInsets.all(16),
@@ -529,11 +482,11 @@ class _HomePageState extends State<HomePage> {
                         itemBuilder: (ctx, i) {
                           final item = _cart[i];
                           return ListTile(
-                            title: Text(item.product.name),
+                            title: Text(item.name),
                             subtitle: Text(
-                                'Rp ${item.product.price.toStringAsFixed(0)} x ${item.quantity}'),
+                                'Rp ${item.price.toStringAsFixed(0)} x ${item.quantity}'),
                             trailing: Text(
-                              'Rp ${(item.product.price * item.quantity).toStringAsFixed(0)}',
+                              'Rp ${(item.price * item.quantity).toStringAsFixed(0)}',
                               style:
                                   const TextStyle(fontWeight: FontWeight.bold),
                             ),
