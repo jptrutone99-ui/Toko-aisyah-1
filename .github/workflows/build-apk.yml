@@ -1,4 +1,3 @@
-flutter create . --platforms=android
 name: Build Android APK
 
 on:
@@ -26,8 +25,15 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Generate Android Files
-        run: flutter create . --platforms=android
+      - name: Re-create Clean Flutter Project
+        run: |
+          mkdir -p temp_backup
+          [ -f lib/main.dart ] && cp lib/main.dart temp_backup/main.dart
+          [ -f pubspec.yaml ] && cp pubspec.yaml temp_backup/pubspec.yaml
+          rm -rf lib android ios web pubspec.yaml
+          flutter create . --org com.tokoaisyah --project-name toko_aisyah
+          [ -f temp_backup/main.dart ] && cp temp_backup/main.dart lib/main.dart
+          [ -f temp_backup/pubspec.yaml ] && cp temp_backup/pubspec.yaml pubspec.yaml
 
       - name: Install Dependencies
         run: flutter pub get
@@ -40,4 +46,3 @@ jobs:
         with:
           name: Toko-Aisyah-Release
           path: build/app/outputs/flutter-apk/app-release.apk
-
