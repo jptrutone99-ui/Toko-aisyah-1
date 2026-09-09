@@ -24,6 +24,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.19.6'
           channel: 'stable'
 
       - name: Install Dependencies
@@ -31,8 +32,8 @@ jobs:
 
       - name: Build Release APK
         env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs='-Xmx3072m -XX:MaxMetaspaceSize=1024m' -Dandroid.experimental.art-ti=false"
-        run: flutter build apk --release --no-tree-shake-icons --extra-front-end-options=--no-implicit-casts
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs='-Xmx3072m -XX:MaxMetaspaceSize=1024m'"
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
