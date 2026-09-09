@@ -31,8 +31,8 @@ jobs:
 
       - name: Build Release APK
         env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs='-Xmx3072m -XX:MaxMetaspaceSize=1024m'"
-        run: flutter build apk --release --no-tree-shake-icons
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs='-Xmx3072m -XX:MaxMetaspaceSize=1024m' -Dandroid.experimental.art-ti=false"
+        run: flutter build apk --release --no-tree-shake-icons --extra-front-end-options=--no-implicit-casts
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
